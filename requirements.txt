@@ -1,0 +1,12 @@
+# requirements.txt
+# Dependencias del Antivirus Académico
+# Instalación: pip install -r requirements.txt
+
+# Monitoreo del sistema de archivos en tiempo real
+watchdog==4.0.1
+
+# Interfaz CLI con colores, tablas, paneles y barras de progreso
+rich==13.7.1
+
+# Carga de variables de entorno desde archivo .env
+python-dotenv==1.0.1
