@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,18 @@ from domain.value_objects import ThreatLevel
 from application.dtos import QuarantineRequestDTO, QuarantineResponseDTO
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_sha256(path: str) -> str:
+    """Calcula el hash SHA-256 de un archivo. Retorna ceros si hay error de lectura."""
+    sha256 = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    except OSError:
+        return "0" * 64
 
 
 class QuarantineUseCase:
@@ -28,10 +41,11 @@ class QuarantineUseCase:
                 )
 
             file_size = file_path.stat().st_size
+            file_hash = _compute_sha256(request.file_path)
 
             threat = ThreatFile(
                 path=request.file_path,
-                hash_sha256="0" * 64,
+                hash_sha256=file_hash,
                 threat_level=ThreatLevel.HIGH,
                 detected_at=datetime.now(),
                 file_size=file_size,

@@ -81,7 +81,9 @@ class FileScanner(IFileScanner):
                 threats.append(threat)
             else:
                 # 2 — Comprobar patrones hexadecimales en el contenido del archivo
-                content_threats = self._scan_content_patterns(path.value, file_size)
+                content_threats = self._scan_content_patterns(
+                    path.value, file_size, file_hash.value
+                )
                 threats.extend(content_threats)
 
         except ScannerException:
@@ -160,7 +162,7 @@ class FileScanner(IFileScanner):
     # ------------------------------------------------------------------
 
     def _scan_content_patterns(
-        self, path: str, file_size: int
+        self, path: str, file_size: int, file_hash: str = ""
     ) -> List[ThreatFile]:
         """Busca patrones hexadecimales sospechosos en el contenido binario."""
         threats: List[ThreatFile] = []
@@ -181,7 +183,7 @@ class FileScanner(IFileScanner):
         for pattern in matched:
             threat = ThreatFile(
                 path=path,
-                hash_sha256="0" * 64,
+                hash_sha256=file_hash or "0" * 64,
                 threat_level=self._parse_threat_level(pattern.threat_level),
                 detected_at=datetime.now(),
                 file_size=file_size,
