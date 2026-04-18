@@ -2,61 +2,111 @@
 dependencies/container.py
 ===========================
 Contenedor de inyección de dependencias del sistema antivirus.
-
-Este archivo es el "ensamblador" del proyecto. Su única responsabilidad
-es construir y conectar todas las piezas del sistema: crea las instancias
-concretas de infraestructura, las inyecta en los casos de uso, y expone
-los casos de uso listos para ser usados por la presentación.
-
-Patrón de diseño aplicado: Service Locator / Dependency Injection Container.
-
-Al centralizar la creación de objetos aquí, el resto del código no necesita
-saber CÓMO se construyen las dependencias, solo las solicita al contenedor.
-
-Esto hace que cambiar una implementación (ej: cambiar SQLite por PostgreSQL)
-solo requiera modificar este archivo, sin tocar application/ ni domain/.
-
-Depende de:
-    - config/settings.py                         → configuraciones del sistema
-    - infrastructure/database_connection.py      → única conexión a BD
-    - infrastructure/signature_repository.py     → implementación del repositorio
-    - infrastructure/file_scanner.py             → motor de escaneo
-    - infrastructure/quarantine_manager.py       → gestor de cuarentena
-    - infrastructure/file_monitor.py             → monitor en tiempo real
-    - infrastructure/cleanup_service.py          → servicio de limpieza
-    - application/scan_use_case.py               → caso de uso de escaneo
-    - application/protection_use_case.py         → caso de uso de protección
-    - application/quarantine_use_case.py         → caso de uso de cuarentena
-    - application/cleanup_use_case.py            → caso de uso de limpieza
-
-Clases que debe contener:
---------------------------
-
-DependencyContainer:
-    Ensamblador central de todas las dependencias del sistema.
-
-    Constructor:
-        Recibe el objeto Settings con las configuraciones.
-        Inicializa la conexión única a la base de datos (DatabaseConnection).
-        Crea las instancias de infraestructura inyectando sus dependencias.
-        Crea los casos de uso inyectando las instancias de infraestructura.
-        Todos los objetos se crean UNA SOLA VEZ en el constructor (singleton informal).
-
-    Método: get_scan_use_case() -> SystemScanUseCase
-        Retorna la instancia lista del caso de uso de escaneo.
-
-    Método: get_protection_use_case() -> RealTimeProtectionUseCase
-        Retorna la instancia lista del caso de uso de protección en tiempo real.
-
-    Método: get_quarantine_use_case() -> QuarantineUseCase
-        Retorna la instancia lista del caso de uso de cuarentena.
-
-    Método: get_cleanup_use_case() -> PCCleanupUseCase
-        Retorna la instancia lista del caso de uso de limpieza.
-
-    Método: shutdown() -> None
-        Cierra todos los recursos abiertos de forma ordenada.
-        Detiene el monitor de archivos si estaba activo.
-        Cierra la conexión a la base de datos.
-        Debe llamarse desde main.py al terminar la ejecución del programa.
+Ensambla y conecta todos los componentes del sistema.
 """
+
+import logging
+
+from config.settings import Settings
+from infrastructure.database_connection import DatabaseConnection
+from infrastructure.signature_repository import SQLiteSignatureRepository
+from infrastructure.file_scanner import FileScanner
+from infrastructure.quarantine_manager import QuarantineManager
+from infrastructure.file_monitor import FileMonitor
+from infrastructure.cleanup_service import SystemCleanupService
+from application.scan_use_case import SystemScanUseCase
+from application.protection_use_case import RealTimeProtectionUseCase
+from application.quarantine_use_case import QuarantineUseCase
+from application.cleanup_use_case import PCCleanupUseCase
+
+logger = logging.getLogger(__name__)
+
+
+class DependencyContainer:
+    """Ensamblador central de todas las dependencias del sistema."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+        # Infraestructura base
+        self._db = DatabaseConnection.get_instance(settings.DB_PATH)
+        self._repository = SQLiteSignatureRepository(self._db)
+
+        # Servicios de infraestructura
+        self._scanner = FileScanner(
+            repository=self._repository,
+            scan_extensions=settings.SCAN_EXTENSIONS,
+            max_size_mb=settings.MAX_FILE_SIZE_MB,
+        )
+        self._quarantine_manager = QuarantineManager(
+            quarantine_dir=settings.QUARANTINE_DIR
+        )
+        self._file_monitor = FileMonitor()
+        self._cleanup_service = SystemCleanupService(
+            temp_dirs=settings.TEMP_DIRS
+        )
+
+        # Casos de uso de aplicación
+        self._quarantine_uc = QuarantineUseCase(self._quarantine_manager)
+
+        self._scan_uc = SystemScanUseCase(
+            scanner=self._scanner,
+            repository=self._repository,
+        )
+
+        self._protection_uc = RealTimeProtectionUseCase(
+            monitor=self._file_monitor,
+            scanner=self._scanner,
+            repository=self._repository,
+            quarantine_use_case=self._quarantine_uc,
+        )
+
+        self._cleanup_uc = PCCleanupUseCase(
+            cleanup_service=self._cleanup_service,
+            quarantine_manager=self._quarantine_manager,
+        )
+
+        logger.info("DependencyContainer inicializado correctamente.")
+
+    # ------------------------------------------------------------------
+    # Accesores de casos de uso
+    # ------------------------------------------------------------------
+
+    def get_scan_use_case(self) -> SystemScanUseCase:
+        """Retorna la instancia lista del caso de uso de escaneo."""
+        return self._scan_uc
+
+    def get_protection_use_case(self) -> RealTimeProtectionUseCase:
+        """Retorna la instancia lista del caso de uso de protección en tiempo real."""
+        return self._protection_uc
+
+    def get_quarantine_use_case(self) -> QuarantineUseCase:
+        """Retorna la instancia lista del caso de uso de cuarentena."""
+        return self._quarantine_uc
+
+    def get_cleanup_use_case(self) -> PCCleanupUseCase:
+        """Retorna la instancia lista del caso de uso de limpieza."""
+        return self._cleanup_uc
+
+    def get_settings(self) -> Settings:
+        """Retorna las configuraciones del sistema."""
+        return self._settings
+
+    def shutdown(self) -> None:
+        """Cierra todos los recursos abiertos de forma ordenada."""
+        logger.info("Iniciando cierre del sistema...")
+
+        # Detener monitor si está activo
+        if self._file_monitor.is_active():
+            try:
+                self._file_monitor.stop_monitoring()
+            except Exception as exc:
+                logger.warning("Error deteniendo monitor: %s", exc)
+
+        # Cerrar base de datos
+        try:
+            self._db.close()
+        except Exception as exc:
+            logger.warning("Error cerrando base de datos: %s", exc)
+
+        logger.info("Sistema cerrado correctamente.")
