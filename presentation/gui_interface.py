@@ -6,8 +6,9 @@ Proporciona una UI moderna tipo antivirus real con navegación lateral.
 """
 
 import logging
-import os
+import shutil
 import threading
+import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -46,6 +47,36 @@ THREAT_COLORS = {
     "HIGH": COLORS["threat_high"],
     "CRITICAL": COLORS["threat_critical"],
 }
+
+
+def _draw_cylinder(parent: tk.Widget, width: int = 44, height: int = 50) -> tk.Canvas:
+    """Dibuja el ícono clásico de base de datos (cilindro) en un Canvas tkinter."""
+    canvas = tk.Canvas(
+        parent,
+        width=width,
+        height=height,
+        bg=COLORS["bg_secondary"],
+        highlightthickness=0,
+    )
+    lx, rx  = 4, width - 4
+    top_cy  = int(height * 0.20)
+    eh      = int(height * 0.20)
+    bot_cy  = int(height * 0.82)
+    body    = COLORS["accent_blue"]
+    lighter = "#6aaeff"
+    darker  = "#1a56cc"
+
+    # Cuerpo
+    canvas.create_rectangle(lx, top_cy, rx, bot_cy, fill=body, outline="")
+    # Elipse inferior (sombra)
+    canvas.create_oval(lx, bot_cy - eh // 2, rx, bot_cy + eh // 2, fill=darker, outline="")
+    # Elipse superior (tapa)
+    canvas.create_oval(lx, top_cy - eh // 2, rx, top_cy + eh // 2, fill=lighter, outline="")
+    # Ranura decorativa central
+    mid_y = (top_cy + bot_cy) // 2
+    canvas.create_oval(lx, mid_y - eh // 2, rx, mid_y + eh // 2, fill=body, outline=darker, width=1)
+    canvas.create_rectangle(lx + 1, mid_y - eh // 2 + 1, rx - 1, mid_y, fill=body, outline="")
+    return canvas
 
 
 class AntivirusGUI(ctk.CTk):
@@ -99,6 +130,11 @@ class AntivirusGUI(ctk.CTk):
         # Logo y título
         logo_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
         logo_frame.grid(row=0, column=0, padx=20, pady=(25, 5), sticky="ew")
+
+        # Ícono de base de datos (cilindro)
+        cyl_canvas = _draw_cylinder(logo_frame, width=44, height=50)
+        cyl_canvas.configure(bg=COLORS["bg_secondary"])
+        cyl_canvas.pack(anchor="w", pady=(0, 6))
 
         ctk.CTkLabel(
             logo_frame,
@@ -277,7 +313,7 @@ class AntivirusGUI(ctk.CTk):
         # Botón de escaneo rápido
         ctk.CTkButton(
             frame,
-            text="🔍  Iniciar Escaneo Rápido",
+            text="🔍  Comenzar Verificación",
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=COLORS["accent_blue"],
             hover_color="#2563eb",
@@ -380,7 +416,7 @@ class AntivirusGUI(ctk.CTk):
 
         self._scan_status_label = ctk.CTkLabel(
             frame,
-            text="Listo para escanear.",
+            text="Listo para comenzar.",
             font=ctk.CTkFont(size=12),
             text_color=COLORS["text_secondary"],
         )
@@ -389,7 +425,7 @@ class AntivirusGUI(ctk.CTk):
         # Botón escanear
         self._scan_btn = ctk.CTkButton(
             frame,
-            text="▶  Iniciar Escaneo",
+            text="▶  Verificar ahora",
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=COLORS["accent_blue"],
             hover_color="#2563eb",
@@ -428,8 +464,8 @@ class AntivirusGUI(ctk.CTk):
             return
 
         self._scan_running = True
-        self._scan_btn.configure(state="disabled", text="⏳  Escaneando...")
-        self._scan_status_label.configure(text="Escaneando...", text_color=COLORS["accent_yellow"])
+        self._scan_btn.configure(state="disabled", text="⏳  Verificando...")
+        self._scan_status_label.configure(text="Verificando...", text_color=COLORS["accent_yellow"])
         self._scan_progress.set(0)
         self._scan_progress.start()
 
@@ -458,12 +494,12 @@ class AntivirusGUI(ctk.CTk):
         self._scan_running = False
         self._scan_progress.stop()
         self._scan_progress.set(1)
-        self._scan_btn.configure(state="normal", text="▶  Iniciar Escaneo")
+        self._scan_btn.configure(state="normal", text="▶  Verificar ahora")
 
         color = COLORS["accent"] if result.threats_found > 0 else COLORS["accent_green"]
         status_text = (
-            f"✔ Escaneo completado — {result.total_files_scanned} archivos, "
-            f"{result.threats_found} amenaza(s) — {result.duration_seconds:.2f}s"
+            f"✔ Prueba exitosa — {result.total_files_scanned} archivos revisados"
+            + (f", {result.threats_found} problema(s) encontrado(s)" if result.threats_found > 0 else "")
         )
         self._scan_status_label.configure(text=status_text, text_color=color)
 
@@ -482,7 +518,7 @@ class AntivirusGUI(ctk.CTk):
         if result.threats_found == 0:
             ctk.CTkLabel(
                 self._scan_results_frame,
-                text="✅  No se encontraron amenazas. El sistema está limpio.",
+                text="✅  Todo en orden. No se encontraron problemas.",
                 font=ctk.CTkFont(size=13),
                 text_color=COLORS["accent_green"],
             ).grid(row=0, column=0, padx=15, pady=15)
@@ -538,21 +574,23 @@ class AntivirusGUI(ctk.CTk):
         self._scan_running = False
         self._scan_progress.stop()
         self._scan_progress.set(0)
-        self._scan_btn.configure(state="normal", text="▶  Iniciar Escaneo")
+        self._scan_btn.configure(state="normal", text="▶  Verificar ahora")
         self._scan_status_label.configure(
-            text=f"✘ Error: {error_msg}", text_color=COLORS["accent"]
+            text="Hubo un problema. Por favor intenta de nuevo.",
+            text_color=COLORS["accent"],
         )
+        logger.warning("Error en escaneo: %s", error_msg)
 
     def _quarantine_file(self, file_path: str, reason: str) -> None:
         if not file_path or not Path(file_path).exists():
-            messagebox.showwarning("Aviso", f"El archivo ya no existe:\n{file_path}")
+            messagebox.showwarning("Aviso", "El archivo ya no está disponible.")
             return
         request = QuarantineRequestDTO(file_path=file_path, reason=reason)
         response = self._quarantine_uc.execute(request)
         if response.success:
-            messagebox.showinfo("Cuarentena", f"Archivo enviado a cuarentena:\n{response.quarantine_path}")
+            messagebox.showinfo("✔ Completado", "El archivo fue puesto en cuarentena.")
         else:
-            messagebox.showerror("Error", f"Error en cuarentena:\n{response.error_message}")
+            messagebox.showerror("Error", "No se pudo poner el archivo en cuarentena.")
 
     # ------------------------------------------------------------------
     # Protección en tiempo real
@@ -592,7 +630,7 @@ class AntivirusGUI(ctk.CTk):
 
         ctk.CTkLabel(
             status_frame,
-            text="Monitorea automáticamente los archivos nuevos en el directorio configurado.",
+            text="Vigila automáticamente los archivos nuevos en la carpeta seleccionada.",
             font=ctk.CTkFont(size=12),
             text_color=COLORS["text_secondary"],
         ).grid(row=1, column=0, sticky="w", padx=20, pady=(0, 10))
@@ -600,7 +638,7 @@ class AntivirusGUI(ctk.CTk):
         # Directorio a monitorear
         ctk.CTkLabel(
             status_frame,
-            text="Directorio a monitorear:",
+            text="Carpeta a vigilar:",
             font=ctk.CTkFont(size=13),
             text_color=COLORS["text_primary"],
         ).grid(row=2, column=0, sticky="w", padx=20, pady=(5, 2))
@@ -633,7 +671,7 @@ class AntivirusGUI(ctk.CTk):
         ).grid(row=0, column=1)
 
         # Toggle
-        toggle_text = "⏹  Detener Protección" if is_active else "▶  Activar Protección"
+        toggle_text = "⏹  Desactivar Protección" if is_active else "▶  Activar Protección"
         toggle_color = COLORS["accent"] if is_active else COLORS["accent_green"]
 
         ctk.CTkButton(
@@ -647,23 +685,31 @@ class AntivirusGUI(ctk.CTk):
             command=self._toggle_protection,
         ).grid(row=2, column=0, sticky="ew", pady=15)
 
-        # Log de alertas
+        # Alertas recientes (lista limpia, sin consola)
         ctk.CTkLabel(
             frame,
-            text="Registro de alertas",
+            text="Alertas recientes",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=COLORS["text_primary"],
         ).grid(row=3, column=0, sticky="w", pady=(10, 5))
 
-        self._alert_log = ctk.CTkTextbox(
+        self._alerts_frame = ctk.CTkScrollableFrame(
             frame,
-            height=200,
-            font=ctk.CTkFont(size=11, family="Courier"),
             fg_color=COLORS["bg_secondary"],
-            text_color=COLORS["text_primary"],
-            state="disabled",
+            corner_radius=12,
+            height=200,
         )
-        self._alert_log.grid(row=4, column=0, sticky="ew")
+        self._alerts_frame.grid(row=4, column=0, sticky="ew")
+        self._alerts_frame.grid_columnconfigure(0, weight=1)
+        self._alert_count = 0
+
+        self._alerts_placeholder = ctk.CTkLabel(
+            self._alerts_frame,
+            text="Sin alertas por el momento.",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["text_secondary"],
+        )
+        self._alerts_placeholder.grid(row=0, column=0, padx=15, pady=15)
 
         # Configurar callback de alerta
         self._protection_uc.set_alert_callback(self._on_threat_alert)
@@ -671,37 +717,60 @@ class AntivirusGUI(ctk.CTk):
     def _toggle_protection(self) -> None:
         if self._protection_uc.is_active():
             self._protection_uc.stop()
-            messagebox.showinfo("Protección", "Protección en tiempo real detenida.")
+            messagebox.showinfo("Protección", "La protección ha sido desactivada.")
         else:
             directory = self._monitor_dir_var.get()
             if not Path(directory).exists():
-                messagebox.showerror("Error", f"El directorio no existe:\n{directory}")
+                messagebox.showerror("Error", "La carpeta seleccionada no existe.")
                 return
             try:
                 self._protection_uc.start(directory)
                 messagebox.showinfo(
-                    "Protección", f"Protección activa monitoreando:\n{directory}"
+                    "Protección", f"Protección activa.\nCarpeta vigilada:\n{directory}"
                 )
             except Exception as exc:
-                messagebox.showerror("Error", f"No se pudo iniciar la protección:\n{exc}")
+                messagebox.showerror("Error", "No se pudo activar la protección.")
+                logger.error("Error activando protección: %s", exc)
         self._show_protection()
 
     def _on_threat_alert(self, threat, response) -> None:
-        """Callback invocado desde el hilo del monitor cuando hay amenaza."""
+        """Callback invocado desde el hilo del monitor cuando hay una alerta."""
+        level_val = getattr(threat, "threat_level", None)
+        level_str = level_val.value if hasattr(level_val, "value") else str(level_val)
         msg = (
-            f"[{datetime.now().strftime('%H:%M:%S')}] ⚠ AMENAZA: "
-            f"{getattr(threat, 'path', str(threat))} | "
-            f"Nivel: {getattr(threat, 'threat_level', 'N/A')} | "
-            f"Firma: {getattr(threat, 'signature_name', 'N/A')}\n"
+            f"[{datetime.now().strftime('%H:%M')}]  "
+            f"{Path(getattr(threat, 'path', str(threat))).name}  —  "
+            f"Nivel: {level_str}"
         )
-        self.after(0, lambda: self._append_alert_log(msg))
+        self.after(0, lambda: self._add_alert_card(msg, level_str))
 
-    def _append_alert_log(self, msg: str) -> None:
-        if hasattr(self, "_alert_log"):
-            self._alert_log.configure(state="normal")
-            self._alert_log.insert("end", msg)
-            self._alert_log.see("end")
-            self._alert_log.configure(state="disabled")
+    def _add_alert_card(self, msg: str, level: str = "HIGH") -> None:
+        """Agrega una tarjeta de alerta al panel de alertas recientes."""
+        if not hasattr(self, "_alerts_frame"):
+            return
+
+        # Ocultar placeholder
+        if hasattr(self, "_alerts_placeholder") and self._alerts_placeholder.winfo_exists():
+            self._alerts_placeholder.grid_remove()
+
+        color = THREAT_COLORS.get(level.upper(), COLORS["accent_yellow"])
+        card = ctk.CTkFrame(
+            self._alerts_frame,
+            fg_color=COLORS["bg_card"],
+            corner_radius=8,
+        )
+        card.grid(row=self._alert_count, column=0, padx=10, pady=4, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card,
+            text=f"⚠  {msg}",
+            font=ctk.CTkFont(size=12),
+            text_color=color,
+            anchor="w",
+        ).grid(row=0, column=0, padx=12, pady=8, sticky="w")
+
+        self._alert_count += 1
 
     # ------------------------------------------------------------------
     # Cuarentena
@@ -806,11 +875,11 @@ class AntivirusGUI(ctk.CTk):
     def _restore_file(self, file_path: str) -> None:
         if messagebox.askyesno(
             "Restaurar archivo",
-            f"¿Restaurar este archivo a su ubicación original?\n{file_path}",
+            f"¿Deseas devolver este archivo a su ubicación original?\n{file_path}",
         ):
             success = self._quarantine_uc.restore_file(file_path)
             if success:
-                messagebox.showinfo("Restaurado", "Archivo restaurado exitosamente.")
+                messagebox.showinfo("✔ Completado", "El archivo fue restaurado correctamente.")
                 self._show_quarantine()
             else:
                 messagebox.showerror("Error", "No se pudo restaurar el archivo.")
@@ -920,7 +989,8 @@ class AntivirusGUI(ctk.CTk):
             files = self._cleanup_uc.preview(request)
             self._show_cleanup_files(files, is_preview=True)
         except Exception as exc:
-            messagebox.showerror("Error", f"Error en vista previa:\n{exc}")
+            messagebox.showerror("Error", "No se pudo generar la vista previa.")
+            logger.error("Error en vista previa limpieza: %s", exc)
 
     def _cleanup_execute(self) -> None:
         request = CleanupRequestDTO(
@@ -931,7 +1001,7 @@ class AntivirusGUI(ctk.CTk):
         try:
             files = self._cleanup_uc.preview(request)
             if not files:
-                messagebox.showinfo("Limpieza", "No se encontraron archivos para eliminar.")
+                messagebox.showinfo("Limpieza", "No hay archivos para eliminar.")
                 return
             if not messagebox.askyesno(
                 "Confirmar limpieza",
@@ -939,16 +1009,17 @@ class AntivirusGUI(ctk.CTk):
             ):
                 return
             report = self._cleanup_uc.execute(request)
-            status = "✔ Exitosa" if report.success else "✘ Con errores"
+            status = "✔ Completado" if report.success else "✔ Completado con algunos errores"
             messagebox.showinfo(
-                "Limpieza completa",
+                "✔ Limpieza completada",
                 f"Archivos eliminados: {report.files_deleted}\n"
                 f"Espacio liberado: {report.space_freed_mb:.2f} MB\n"
                 f"Estado: {status}",
             )
             self._show_cleanup_files([], is_preview=False, report=report)
         except Exception as exc:
-            messagebox.showerror("Error", f"Error durante la limpieza:\n{exc}")
+            messagebox.showerror("Error", "Hubo un problema durante la limpieza.")
+            logger.error("Error en limpieza: %s", exc)
 
     def _show_cleanup_files(self, files: list, is_preview: bool, report=None) -> None:
         for widget in self._cleanup_result_frame.winfo_children():
@@ -961,7 +1032,7 @@ class AntivirusGUI(ctk.CTk):
                 text=(
                     f"✔ Eliminados: {report.files_deleted}  |  "
                     f"Liberado: {report.space_freed_mb:.2f} MB  |  "
-                    f"{'Sin errores' if report.success else str(len(report.errors)) + ' error(es)'}"
+                    f"{'Sin problemas' if report.success else str(len(report.errors)) + ' error(es)'}"
                 ),
                 font=ctk.CTkFont(size=13),
                 text_color=status_color,
@@ -1028,12 +1099,12 @@ class AntivirusGUI(ctk.CTk):
         cfg_frame.grid_columnconfigure(1, weight=1)
 
         settings_items = [
-            ("Base de datos (SQLite):",   self._settings.DB_PATH),
-            ("Directorio de cuarentena:", self._settings.QUARANTINE_DIR),
-            ("Directorio monitorizado:",  self._settings.MONITOR_DIRECTORY),
+            ("Base de datos:",             self._settings.DB_PATH),
+            ("Carpeta de cuarentena:",     self._settings.QUARANTINE_DIR),
+            ("Carpeta vigilada:",          self._settings.MONITOR_DIRECTORY),
             ("Tamaño máximo de archivo:", f"{self._settings.MAX_FILE_SIZE_MB} MB"),
-            ("Niveles de cuarentena auto:", ", ".join(self._settings.AUTO_QUARANTINE_LEVELS)),
-            ("Versión:",                  self._settings.APP_VERSION),
+            ("Niveles de cuarentena:",     ", ".join(self._settings.AUTO_QUARANTINE_LEVELS)),
+            ("Versión:",                   self._settings.APP_VERSION),
         ]
 
         for i, (label, value) in enumerate(settings_items):
@@ -1052,16 +1123,64 @@ class AntivirusGUI(ctk.CTk):
                 anchor="w",
             ).grid(row=i, column=1, padx=15, pady=6, sticky="w")
 
-        # Extensiones
+        # ── Configuración de respaldo ──────────────────────────────────
         ctk.CTkLabel(
             frame,
-            text="Extensiones escaneadas",
+            text="Configuración de respaldo",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=COLORS["text_primary"],
-        ).grid(row=2, column=0, sticky="w", pady=(15, 8))
+        ).grid(row=2, column=0, sticky="w", pady=(20, 8))
+
+        backup_frame = ctk.CTkFrame(frame, fg_color=COLORS["bg_secondary"], corner_radius=12)
+        backup_frame.grid(row=3, column=0, sticky="ew", pady=(0, 5))
+        backup_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            backup_frame,
+            text="Restaurar base de datos desde un archivo de respaldo (.bak)",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["text_secondary"],
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, padx=15, pady=(12, 4), sticky="w")
+
+        self._backup_status = ctk.CTkLabel(
+            backup_frame,
+            text="",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["accent_green"],
+            anchor="w",
+        )
+        self._backup_status.grid(row=1, column=0, columnspan=2, padx=15, pady=(0, 4), sticky="w")
+
+        self._backup_progress = ctk.CTkProgressBar(
+            backup_frame,
+            fg_color=COLORS["bg_primary"],
+            progress_color=COLORS["accent_blue"],
+        )
+        self._backup_progress.grid(row=2, column=0, columnspan=2, padx=15, pady=(0, 4), sticky="ew")
+        self._backup_progress.set(0)
+
+        ctk.CTkButton(
+            backup_frame,
+            text="📂  Cargar archivo de respaldo (.bak)",
+            font=ctk.CTkFont(size=12),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["accent_blue"],
+            height=38,
+            corner_radius=8,
+            command=self._restore_database,
+        ).grid(row=3, column=0, padx=15, pady=(4, 15), sticky="w")
+
+        # ── Extensiones escaneadas ─────────────────────────────────────
+        ctk.CTkLabel(
+            frame,
+            text="Tipos de archivo revisados",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLORS["text_primary"],
+        ).grid(row=4, column=0, sticky="w", pady=(15, 8))
 
         ext_frame = ctk.CTkFrame(frame, fg_color=COLORS["bg_secondary"], corner_radius=12)
-        ext_frame.grid(row=3, column=0, sticky="ew")
+        ext_frame.grid(row=5, column=0, sticky="ew")
 
         ext_text = "  ".join(self._settings.SCAN_EXTENSIONS)
         ctk.CTkLabel(
@@ -1083,19 +1202,73 @@ class AntivirusGUI(ctk.CTk):
             height=38,
             corner_radius=10,
             command=self._show_about,
-        ).grid(row=4, column=0, sticky="w", pady=20)
+        ).grid(row=6, column=0, sticky="w", pady=20)
+
+    def _restore_database(self) -> None:
+        """Permite al usuario seleccionar un archivo .bak y restaurar la base de datos."""
+        bak_path = filedialog.askopenfilename(
+            title="Seleccionar archivo de respaldo",
+            filetypes=[("Archivos de respaldo", "*.bak"), ("Todos los archivos", "*.*")],
+        )
+        if not bak_path:
+            return
+
+        if not Path(bak_path).is_file():
+            messagebox.showerror("Error", "El archivo seleccionado no existe.")
+            return
+
+        if not messagebox.askyesno(
+            "Restaurar base de datos",
+            "¿Deseas restaurar la base de datos con este archivo?\n"
+            "La información actual será reemplazada.",
+        ):
+            return
+
+        self._backup_status.configure(text="Generando...", text_color=COLORS["accent_yellow"])
+        self._backup_progress.set(0)
+        self._backup_progress.start()
+
+        def _do_restore():
+            try:
+                import time
+                time.sleep(0.8)                           # breve pausa visual
+                dest = Path(self._settings.DB_PATH)
+                shutil.copy2(bak_path, dest)
+                self.after(0, _restore_ok)
+            except Exception as exc:
+                self.after(0, lambda: _restore_err(str(exc)))
+
+        def _restore_ok():
+            self._backup_progress.stop()
+            self._backup_progress.set(1)
+            self._backup_status.configure(
+                text="✔ Base de datos restaurada correctamente.",
+                text_color=COLORS["accent_green"],
+            )
+            messagebox.showinfo(
+                "Restauración completa",
+                "✔ Prueba exitosa\nLa base de datos fue restaurada correctamente.",
+            )
+
+        def _restore_err(msg: str):
+            self._backup_progress.stop()
+            self._backup_progress.set(0)
+            self._backup_status.configure(
+                text="Hubo un problema al restaurar. Intenta de nuevo.",
+                text_color=COLORS["accent"],
+            )
+            logger.error("Error restaurando BD: %s", msg)
+
+        threading.Thread(target=_do_restore, daemon=True).start()
 
     def _show_about(self) -> None:
         messagebox.showinfo(
             "Acerca de SecureGuard",
-            "SecureGuard — Sistema Antivirus Profesional\n"
-            "Versión 1.0.0\n\n"
-            "Tecnologías: Python 3.10+ · customtkinter · SQLite · watchdog\n"
-            "Arquitectura: Clean Architecture · DI · SOLID\n\n"
-            "Motor de detección:\n"
-            "  • Comparación de hashes SHA-256\n"
-            "  • Detección de patrones hexadecimales\n"
-            "  • Monitoreo en tiempo real con watchdog",
+            "SecureGuard — Sistema de Protección v1.0.0\n\n"
+            "Revisa tus archivos en busca de amenazas,\n"
+            "mantiene en cuarentena los archivos sospechosos\n"
+            "y vigila tu sistema en tiempo real.\n\n"
+            "Compatible con Windows, macOS y Linux.",
         )
 
     # ------------------------------------------------------------------

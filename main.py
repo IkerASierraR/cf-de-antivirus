@@ -52,7 +52,7 @@ def main() -> None:
         print(f"\n[ERROR] Error inesperado: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # 3. Lanzar interfaz — primero GUI, luego CLI como fallback
+    # 3. Lanzar interfaz — pantalla de login → GUI principal
     try:
         import customtkinter  # noqa: F401
 
@@ -64,10 +64,18 @@ def main() -> None:
                 _has_display = False
 
         if _has_display:
+            from presentation.login_window import LoginWindow
             from presentation.gui_interface import AntivirusGUI
-            logger.info("Lanzando interfaz gráfica (customtkinter).")
-            app = AntivirusGUI(container)
-            app.run()
+
+            def _on_login_success(c) -> None:
+                logger.info("Inicio de sesión exitoso. Lanzando interfaz principal.")
+                app = AntivirusGUI(c)
+                app.run()
+
+            logger.info("Mostrando pantalla de inicio de sesión.")
+            login = LoginWindow(container)
+            login.set_on_success(_on_login_success)
+            login.run()
             return
 
     except ImportError:
