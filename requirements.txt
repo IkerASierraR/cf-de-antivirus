@@ -1,6 +1,9 @@
 # requirements.txt
-# Dependencias del Antivirus Académico
+# Dependencias del Antivirus SecureGuard
 # Instalación: pip install -r requirements.txt
+
+# Interfaz gráfica moderna
+customtkinter==5.2.2
 
 # Monitoreo del sistema de archivos en tiempo real
 watchdog==4.0.1

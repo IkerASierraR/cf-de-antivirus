@@ -1,91 +1,88 @@
-import logging
-from pathlib import Path
-from typing import List
+"""
+application/scan_use_case.py
+==============================
+Caso de uso de escaneo del sistema. Orquesta el motor de escaneo
+y produce un ScanResponseDTO listo para la capa de presentación.
+"""
 
-from domain.interfaces import FileScanner
-from domain.entities import ScanReport
-from domain.exceptions import FileNotFoundError, ScanError
-from .dtos import ScanRequestDTO, ScanResponseDTO, InfectedFileDTO
+import logging
+import time
+from pathlib import Path
+
+from application.dtos import ScanRequestDTO, ScanResponseDTO
+from domain.exceptions import InvalidFilePathException, ScannerException
+from domain.interfaces import IFileScanner, ISignatureRepository
+from domain.value_objects import FilePath
 
 logger = logging.getLogger(__name__)
 
 
-class ScanUseCase:
-    """Caso de uso para escaneo de archivos"""
-    
-    def __init__(self, file_scanner: FileScanner):
-        self.file_scanner = file_scanner
-    
-    async def execute(self, request: ScanRequestDTO) -> ScanResponseDTO:
+class SystemScanUseCase:
+    """Caso de uso para escaneo de archivos y directorios."""
+
+    def __init__(
+        self,
+        scanner: IFileScanner,
+        repository: ISignatureRepository,
+    ) -> None:
+        self._scanner = scanner
+        self._repository = repository
+
+    def execute(self, request: ScanRequestDTO) -> ScanResponseDTO:
         """
-        Ejecuta el escaneo de archivos según la solicitud
-        
+        Ejecuta el escaneo según la solicitud.
+
         Args:
-            request: DTO con la solicitud de escaneo
-            
+            request: DTO con la ruta objetivo y configuración del escaneo.
+
         Returns:
-            DTO con los resultados del escaneo
-            
+            ScanResponseDTO con estadísticas y lista de amenazas.
+
         Raises:
-            FileNotFoundError: Si el path no existe
-            ScanError: Si ocurre un error durante el escaneo
+            InvalidFilePathException: Si la ruta no existe.
+            ScannerException: Si ocurre un error durante el escaneo.
         """
+        target = Path(request.target_path)
+        if not target.exists():
+            raise InvalidFilePathException(
+                f"Ruta no encontrada: {request.target_path}"
+            )
+
+        start = time.time()
+
         try:
-            # Validar que el path existe
-            if not request.path.exists():
-                raise FileNotFoundError(f"Path no encontrado: {request.path}")
-            
-            # Realizar el escaneo
-            if request.path.is_file():
-                # Escaneo de archivo individual
-                result = await self.file_scanner.scan_file(request.path)
-                report = ScanReport(
-                    scan_id="single_file",
-                    start_time=result.file_hash.sha256  # Esto no es correcto, pero para mantener la estructura
-                )
-                report.add_result(result)
-                report.complete()
+            if target.is_file():
+                result = self._scanner.scan_file(FilePath(str(target)))
             else:
-                # Escaneo de directorio
-                report = await self.file_scanner.scan_directory(
-                    request.path,
-                    recursive=request.recursive
-                )
-            
-            # Convertir a DTO de respuesta
-            return self._to_response_dto(report)
-            
-        except (FileNotFoundError, ScanError) as e:
-            logger.error(f"Error en caso de uso de escaneo: {e}")
+                result = self._scanner.scan_directory(str(target))
+        except (InvalidFilePathException, ScannerException):
             raise
-        except Exception as e:
-            logger.error(f"Error inesperado en escaneo: {e}")
-            raise ScanError(f"Error inesperado durante el escaneo: {e}")
-    
-    def _to_response_dto(self, report: ScanReport) -> ScanResponseDTO:
-        """Convierte un ScanReport a ScanResponseDTO"""
-        infected_details = []
-        
-        for result in report.details:
-            infected_details.append(InfectedFileDTO(
-                file_path=str(result.file_path),
-                file_size=result.file_size,
-                threat_name=result.threat_name,
-                threat_level=result.threat_level.value if result.threat_level else "UNKNOWN",
-                threat_category=result.threat_category.value if result.threat_category else "UNKNOWN",
-                pattern_matches=result.pattern_matches
-            ))
-        
-        summary = report.get_summary()
-        
+        except Exception as exc:
+            logger.error("Error inesperado en escaneo: %s", exc)
+            raise ScannerException(
+                request.target_path, f"Error inesperado: {exc}"
+            ) from exc
+
+        threat_list = [
+            {
+                "file_path": threat.path,
+                "threat_level": threat.threat_level.value,
+                "threat_name": threat.signature_name,
+                "signature_name": threat.signature_name,
+                "category": threat.category,
+                "threat_category": threat.category,
+                "file_size": threat.file_size,
+            }
+            for threat in result.threats_found
+        ]
+
+        duration = time.time() - start
+        status = "AMENAZAS DETECTADAS" if result.has_threats() else "LIMPIO"
+
         return ScanResponseDTO(
-            scan_id=report.scan_id,
-            start_time=report.start_time,
-            end_time=report.end_time,
-            total_files=report.total_files_scanned,
-            infected_files=report.infected_files,
-            threats_by_level=report.threats_by_level,
-            threats_by_category=report.threats_by_category,
-            summary=summary,
-            details=infected_details
+            total_files_scanned=result.scanned_files,
+            threats_found=result.threat_count(),
+            threat_list=threat_list,
+            duration_seconds=duration,
+            status=status,
         )

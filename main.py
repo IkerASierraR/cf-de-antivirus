@@ -1,36 +1,112 @@
 """
 main.py
 ========
-Punto de entrada principal del sistema antivirus académico.
+Punto de entrada principal del sistema antivirus SecureGuard.
 
-Este archivo es el único que debe ejecutarse directamente:
+Ejecutar:
     python main.py
 
-Su responsabilidad es mínima:
-    1. Cargar las configuraciones del sistema.
-    2. Construir el contenedor de dependencias.
-    3. Lanzar la interfaz de usuario.
-    4. Garantizar el cierre limpio de recursos al terminar.
-
-No debe contener lógica de negocio ni detalles de implementación.
-
-Flujo de ejecución:
-    1. Se instancia Settings() → carga configuraciones y variables de entorno.
-    2. Se instancia DependencyContainer(settings) → ensambla todo el sistema.
-    3. Se instancia CLIInterface(container) → prepara la interfaz de usuario.
-    4. Se llama a interface.run() → inicia el bucle principal de la aplicación.
-    5. Al salir (por el usuario o por excepción), se llama a container.shutdown()
-       para cerrar la base de datos y detener el monitor de forma ordenada.
-
-Manejo de errores en este nivel:
-    - DatabaseConnectionException: muestra mensaje claro y termina el programa.
-    - KeyboardInterrupt (Ctrl+C): termina limpiamente sin stack trace.
-    - Cualquier otra excepción no capturada: muestra el error y cierra recursos.
+Flujo:
+    1. Carga configuraciones (Settings).
+    2. Construye el contenedor de dependencias (DependencyContainer).
+    3. Lanza la interfaz gráfica customtkinter (GUI).
+       Si el entorno es sin pantalla o customtkinter no está disponible,
+       usa automáticamente la interfaz CLI (rich).
+    4. Al salir, cierra recursos ordenadamente.
 """
 
-# Las importaciones irían aquí:
-# from config.settings import Settings
-# from dependencies.container import DependencyContainer
-# from presentation.cli_interface import CLIInterface
+import logging
+import sys
 
-# El bloque if __name__ == "__main__": iría aquí con el flujo descrito arriba.
+# Configuración básica de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+logger = logging.getLogger("secureguard")
+
+
+def main() -> None:
+    """Función principal del sistema antivirus."""
+    from config.settings import Settings
+    from dependencies.container import DependencyContainer
+    from domain.exceptions import DatabaseConnectionException
+
+    try:
+        # 1. Cargar configuraciones
+        settings = Settings()
+        logger.info("Configuración cargada. Versión: %s", settings.APP_VERSION)
+
+        # 2. Construir contenedor de dependencias (inicializa BD, repositorios, etc.)
+        container = DependencyContainer(settings)
+        logger.info("Contenedor de dependencias inicializado.")
+
+    except DatabaseConnectionException as exc:
+        logger.critical("Error crítico de base de datos: %s", exc)
+        print(f"\n[ERROR] No se puede iniciar el sistema: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        logger.critical("Error inesperado al iniciar el sistema: %s", exc)
+        print(f"\n[ERROR] Error inesperado: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # 3. Lanzar interfaz — pantalla de login → GUI principal
+    try:
+        import customtkinter  # noqa: F401
+
+        # Verificar que hay un display disponible (sistemas Unix sin X)
+        _has_display = True
+        if sys.platform.startswith("linux"):
+            import os
+            if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+                _has_display = False
+
+        if _has_display:
+            from presentation.login_window import LoginWindow
+            from presentation.gui_interface import AntivirusGUI
+
+            def _on_login_success(c) -> None:
+                logger.info("Inicio de sesión exitoso. Lanzando interfaz principal.")
+                app = AntivirusGUI(c)
+                app.run()
+
+            logger.info("Mostrando pantalla de inicio de sesión.")
+            login = LoginWindow(container)
+            login.set_on_success(_on_login_success)
+            login.run()
+            return
+
+    except ImportError:
+        logger.info("customtkinter no disponible. Usando interfaz CLI.")
+    except Exception as exc:
+        logger.warning("No se pudo iniciar la GUI (%s). Cambiando a CLI.", exc)
+
+    # Fallback: interfaz CLI
+    try:
+        from presentation.cli_interface import CLIInterface
+        logger.info("Lanzando interfaz CLI.")
+        interface = CLIInterface(container)
+        interface.run()
+    except KeyboardInterrupt:
+        print("\n\nCerrado por el usuario (Ctrl+C).")
+    except Exception as exc:
+        logger.error("Error en la interfaz CLI: %s", exc)
+        print(f"\n[ERROR] {exc}", file=sys.stderr)
+    finally:
+        try:
+            container.shutdown()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nCerrado por el usuario.")
+    except Exception as exc:
+        print(f"\n[ERROR] Error inesperado: {exc}", file=sys.stderr)
+        sys.exit(1)
+
